@@ -11,9 +11,11 @@
 """
 
 import argparse
+import json
+from pathlib import Path
 
 from google import genai
-from google.genai import errors
+from google.genai import errors, types
 
 from app.config import MODEL, api_error_message, get_api_key
 
@@ -21,14 +23,61 @@ from app.config import MODEL, api_error_message, get_api_key
 DEFAULT_QUESTION = "AIE2026の講座の宿題にある「3レベル」とは何ですか？"
 
 
+
 def ask(question: str) -> str:
     client = genai.Client(api_key=get_api_key())
-    response = client.models.generate_content(model=MODEL, contents=question)
 
-    # TODO(第1回 演習): response.usage_metadata から
-    #   入力トークン数と出力トークン数を表示してみよう（Copilotに頼んでよい）
+    # 1. 履歴ファイルの場所を決める
+    history_file = Path("/workspaces/lecture-ai-engineering-2026/lectures/01/chat_history.json")
+
+    # 2. 保存済みの履歴を読み込む
+    if history_file.exists():
+        with history_file.open("r", encoding="utf-8") as f:
+            saved_history = json.load(f)
+
+        history = [
+            types.Content.model_validate(item)
+            for item in saved_history
+        ]
+    else:
+        history = []
+
+    # 3. 過去の会話を持つチャットを作る
+    chat = client.chats.create(
+        model=MODEL,
+        history=history,
+    )
+
+    # 4. 質問を送り、回答を受け取る
+    response = chat.send_message(question)
+
+    # 5. トークン数を表示する
+    usage = response.usage_metadata
+    if usage is not None:
+        print(
+            f"[トークン] 入力: {usage.prompt_token_count}, "
+            f"出力: {usage.candidates_token_count}"
+        )
+
+    # 6. 今回の会話をファイルに保存する
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with history_file.open("w", encoding="utf-8") as f:
+        json.dump(
+            [
+                item.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                )
+                for item in chat.get_history()
+            ],
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
 
     return response.text
+
 
 
 def main() -> None:
